@@ -1,4 +1,4 @@
-app_repo: ""
+app_repo: "https://github.com/Dhivakaran07/try-proj.git"
 app_dest: "/var/www/html"
 app_version: "main"     # can be tag v1/v2 or branch dev/main
 db_host: ""             # set from terraform output (Jenkins/CLI)
