@@ -1,0 +1,7 @@
+app_repo: ""
+app_dest: "/var/www/html"
+app_version: "main"     # can be tag v1/v2 or branch dev/main
+db_host: ""             # set from terraform output (Jenkins/CLI)
+db_user: "adminuser"
+db_name: "streamline"
+db_pass: "dhiva123"             # set securely (Jenkins credentials or extra-vars)
