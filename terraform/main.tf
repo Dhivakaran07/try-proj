@@ -144,16 +144,27 @@ resource "aws_security_group" "web_sg" {
 
 resource "aws_security_group" "rds_sg" {
   name        = "streamline-rds-sg"
-  description = "RDS security group"
+  description = "RDS security group (MySQL only from web SG)"
   vpc_id      = aws_vpc.streamline.id
 
   ingress {
-    description     = "MySQL Access"
+    description     = "MySQL from Web SG only"
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-       protocol    = "-1"
+    security_groups = [aws_security_group.web_sg.id]
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "streamline-rds-sg"
   }
 }
 
