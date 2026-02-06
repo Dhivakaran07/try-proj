@@ -1,0 +1,72 @@
+- name: Configure and deploy StreamLine web tier
+  hosts: web
+  become: yes
+
+  vars:
+    apache_pkg: httpd
+    php_pkgs:
+      - php
+      - php-mysqli
+    mysql_client_pkg: mariadb
+
+  tasks:
+    - name: Install packages (Apache, PHP, MySQL client, Git)
+      yum:
+        name:
+          - "{{ apache_pkg }}"
+          - git
+          - "{{ mysql_client_pkg }}"
+          - "{{ php_pkgs }}"
+        state: present
+
+    - name: Enable and start Apache
+      service:
+        name: httpd
+        enabled: yes
+        state: started
+
+    - name: Clean existing web root (optional)
+      file:
+        path: "{{ app_dest }}"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy app from GitHub
+      git:
+        repo: "{{ app_repo }}"
+        dest: "/opt/streamline-app"
+        version: "{{ app_version }}"
+        force: yes
+
+    - name: Copy app/ to Apache web root
+      copy:
+        src: "/opt/streamline-app/app/"
+        dest: "{{ app_dest }}/"
+        remote_src: yes
+
+    - name: Set DB env vars for Apache (Amazon Linux 2)
+      lineinfile:
+        path: /etc/sysconfig/httpd
+        regexp: "^export {{ item.key }}="
+        line: "export {{ item.key }}={{ item.value }}"
+        create: yes
+      loop:
+        - { key: "DB_HOST", value: "{{ db_host }}" }
+        - { key: "DB_USER", value: "{{ db_user }}" }
+        - { key: "DB_PASS", value: "{{ db_pass }}" }
+        - { key: "DB_NAME", value: "{{ db_name }}" }
+
+    - name: Restart Apache to pick env vars
+      service:
+        name: httpd
+        state: restarted
+
+    - name: Verify DB connectivity (CLI)
+      shell: |
+        mysql -h {{ db_host }} -u{{ db_user }} -p{{ db_pass }} -e "SELECT 1;" {{ db_name }}
+      register: dbcheck
+      changed_when: false
+
+    - name: Show DB check output
+      debug:
+        var: dbcheck.stdout
