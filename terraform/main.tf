@@ -1,5 +1,6 @@
 terraform {
   required_version = ">= 1.5.0"
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -11,6 +12,18 @@ terraform {
 ############################
 # VARIABLES
 ############################
+variable "aws_region" {
+  description = "AWS Region"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "project_name" {
+  description = "Prefix for resource names"
+  type        = string
+  default     = "streamline"
+}
+
 variable "my_ip_cidr" {
   description = "Your public IP in CIDR format, e.g. 1.2.3.4/32"
   type        = string
@@ -22,11 +35,40 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "key_name" {
+  description = "Existing EC2 key pair name in this region"
+  type        = string
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t3.micro"
+}
+
 ############################
 # PROVIDER
 ############################
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
+}
+
+############################
+# AMI (use latest Amazon Linux 2)
+############################
+data "aws_ami" "amazon_linux2" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
 }
 
 ############################
@@ -36,8 +78,9 @@ resource "aws_vpc" "streamline" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_hostnames = true
   enable_dns_support   = true
+
   tags = {
-    Name = "streamline-vpc"
+    Name = "${var.project_name}-vpc"
   }
 }
 
@@ -50,8 +93,9 @@ resource "aws_subnet" "public" {
   cidr_block              = element(["10.0.1.0/24", "10.0.2.0/24"], count.index)
   availability_zone       = element(["us-east-1a", "us-east-1b"], count.index)
   map_public_ip_on_launch = true
+
   tags = {
-    Name = "streamline-public-${count.index + 1}"
+    Name = "${var.project_name}-public-${count.index + 1}"
   }
 }
 
@@ -60,8 +104,9 @@ resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.streamline.id
   cidr_block        = element(["10.0.3.0/24", "10.0.4.0/24"], count.index)
   availability_zone = element(["us-east-1a", "us-east-1b"], count.index)
+
   tags = {
-    Name = "streamline-private-${count.index + 1}"
+    Name = "${var.project_name}-private-${count.index + 1}"
   }
 }
 
@@ -70,8 +115,9 @@ resource "aws_subnet" "private" {
 ############################
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.streamline.id
+
   tags = {
-    Name = "streamline-igw"
+    Name = "${var.project_name}-igw"
   }
 }
 
@@ -80,8 +126,9 @@ resource "aws_internet_gateway" "igw" {
 ############################
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.streamline.id
+
   tags = {
-    Name = "streamline-public-rt"
+    Name = "${var.project_name}-public-rt"
   }
 }
 
@@ -99,8 +146,9 @@ resource "aws_route_table_association" "public_assoc" {
 
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.streamline.id
+
   tags = {
-    Name = "streamline-private-rt"
+    Name = "${var.project_name}-private-rt"
   }
 }
 
@@ -113,9 +161,11 @@ resource "aws_route_table_association" "private_assoc" {
 ############################
 # SECURITY GROUPS
 ############################
-resource "aws_security_group" "web_sg" {
-  name        = "streamline-web-sg"
-  description = "Web security group"
+
+# ✅ ALB SG: allow HTTP from anywhere
+resource "aws_security_group" "alb_sg" {
+  name        = "${var.project_name}-alb-sg"
+  description = "ALB SG: HTTP from internet"
   vpc_id      = aws_vpc.streamline.id
 
   ingress {
@@ -126,8 +176,35 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-alb-sg"
+  }
+}
+
+# ✅ Web SG: HTTP only from ALB SG, SSH only from your IP
+resource "aws_security_group" "web_sg" {
+  name        = "${var.project_name}-web-sg"
+  description = "Web SG: HTTP from ALB only, SSH from my IP"
+  vpc_id      = aws_vpc.streamline.id
+
   ingress {
-    description = "SSH"
+    description     = "HTTP from ALB only"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  ingress {
+    description = "SSH from my IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -135,16 +212,22 @@ resource "aws_security_group" "web_sg" {
   }
 
   egress {
+    description = "All outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  tags = {
+    Name = "${var.project_name}-web-sg"
+  }
 }
 
+# ✅ RDS SG: MySQL only from Web SG
 resource "aws_security_group" "rds_sg" {
-  name        = "streamline-rds-sg"
-  description = "RDS security group (MySQL only from web SG)"
+  name        = "${var.project_name}-rds-sg"
+  description = "RDS SG: MySQL only from Web SG"
   vpc_id      = aws_vpc.streamline.id
 
   ingress {
@@ -164,7 +247,7 @@ resource "aws_security_group" "rds_sg" {
   }
 
   tags = {
-    Name = "streamline-rds-sg"
+    Name = "${var.project_name}-rds-sg"
   }
 }
 
@@ -173,16 +256,15 @@ resource "aws_security_group" "rds_sg" {
 ############################
 resource "aws_instance" "web" {
   count         = 2
-  ami           = "ami-0b6c6ebed2801a5cb"
-  instance_type = "t3.micro"
+  ami           = data.aws_ami.amazon_linux2.id
+  instance_type = var.instance_type
 
   subnet_id              = aws_subnet.public[count.index].id
   vpc_security_group_ids = [aws_security_group.web_sg.id]
-
-  key_name = "streamline-key"     # <-- YOUR KEYPAIR NAME
+  key_name               = var.key_name
 
   tags = {
-    Name = "streamline-web-${count.index + 1}"
+    Name = "${var.project_name}-web-${count.index + 1}"
   }
 
   user_data = <<-EOF
@@ -196,20 +278,35 @@ resource "aws_instance" "web" {
 # LOAD BALANCER
 ############################
 resource "aws_lb" "alb" {
-  name               = "streamline-alb"
+  name               = "${var.project_name}-alb"
   load_balancer_type = "application"
   subnets            = aws_subnet.public[*].id
-  security_groups    = [aws_security_group.web_sg.id]
+
+  # ✅ Correct: ALB uses ALB SG
+  security_groups = [aws_security_group.alb_sg.id]
+
+  tags = {
+    Name = "${var.project_name}-alb"
+  }
 }
 
 resource "aws_lb_target_group" "tg" {
-  name     = "streamline-tg"
+  name     = "${var.project_name}-tg"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.streamline.id
 
   health_check {
-    path = "/"
+    path                = "/"
+    interval            = 15
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    matcher             = "200-399"
+  }
+
+  tags = {
+    Name = "${var.project_name}-tg"
   }
 }
 
@@ -235,16 +332,20 @@ resource "aws_lb_listener" "listener" {
 # RDS (MYSQL)
 ############################
 resource "aws_db_subnet_group" "db_group" {
-  name       = "streamline-db-subnets"
+  name       = "${var.project_name}-db-subnets"
   subnet_ids = aws_subnet.private[*].id
+
+  tags = {
+    Name = "${var.project_name}-db-subnets"
+  }
 }
 
 resource "aws_db_instance" "mysql" {
-  identifier             = "streamline-mysql"
-  engine                 = "mysql"
-  engine_version         = "8.0"
-  instance_class         = "db.t3.micro"
-  allocated_storage      = 20
+  identifier        = "${var.project_name}-mysql"
+  engine            = "mysql"
+  engine_version    = "8.0"
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
 
   db_name  = "streamline"
   username = "adminuser"
@@ -255,19 +356,26 @@ resource "aws_db_instance" "mysql" {
 
   publicly_accessible = false
   skip_final_snapshot = true
+
+  tags = {
+    Name = "${var.project_name}-mysql"
+  }
 }
 
 ############################
-# OUTPUTS
+# OUTPUTS (Used by Jenkins)
 ############################
 output "alb_dns" {
-  value = aws_lb.alb.dns_name
+  value       = aws_lb.alb.dns_name
+  description = "ALB DNS name"
 }
 
 output "web_public_ips" {
-  value = [for i in aws_instance.web : i.public_ip]
+  value       = [for i in aws_instance.web : i.public_ip]
+  description = "Public IPs of web instances"
 }
 
 output "rds_endpoint" {
-  value = aws_db_instance.mysql.address
+  value       = aws_db_instance.mysql.address
+  description = "RDS endpoint"
 }
