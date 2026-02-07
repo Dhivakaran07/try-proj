@@ -7,6 +7,15 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # ✅ Recommended for Jenkins: remote state (uncomment and fill values)
+  # backend "s3" {
+  #   bucket         = "YOUR_TFSTATE_BUCKET"
+  #   key            = "streamline/terraform.tfstate"
+  #   region         = "us-east-1"
+  #   dynamodb_table = "YOUR_TF_LOCK_TABLE"
+  #   encrypt        = true
+  # }
 }
 
 ############################
@@ -47,10 +56,25 @@ variable "instance_type" {
 }
 
 ############################
+# LOCALS
+############################
+locals {
+  common_tags = {
+    Project = var.project_name
+    Managed = "terraform"
+  }
+}
+
+############################
 # PROVIDER
 ############################
 provider "aws" {
   region = var.aws_region
+}
+
+# ✅ Use available AZs dynamically (avoids hardcoding us-east-1a/b issues)
+data "aws_availability_zones" "available" {
+  state = "available"
 }
 
 ############################
@@ -79,9 +103,9 @@ resource "aws_vpc" "streamline" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-vpc"
-  }
+  })
 }
 
 ############################
@@ -91,23 +115,23 @@ resource "aws_subnet" "public" {
   count                   = 2
   vpc_id                  = aws_vpc.streamline.id
   cidr_block              = element(["10.0.1.0/24", "10.0.2.0/24"], count.index)
-  availability_zone       = element(["us-east-1a", "us-east-1b"], count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-public-${count.index + 1}"
-  }
+  })
 }
 
 resource "aws_subnet" "private" {
   count             = 2
   vpc_id            = aws_vpc.streamline.id
   cidr_block        = element(["10.0.3.0/24", "10.0.4.0/24"], count.index)
-  availability_zone = element(["us-east-1a", "us-east-1b"], count.index)
+  availability_zone = data.aws_availability_zones.available.names[count.index]
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-private-${count.index + 1}"
-  }
+  })
 }
 
 ############################
@@ -116,9 +140,9 @@ resource "aws_subnet" "private" {
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.streamline.id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-igw"
-  }
+  })
 }
 
 ############################
@@ -127,9 +151,9 @@ resource "aws_internet_gateway" "igw" {
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.streamline.id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-public-rt"
-  }
+  })
 }
 
 resource "aws_route" "public_to_igw" {
@@ -147,9 +171,9 @@ resource "aws_route_table_association" "public_assoc" {
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.streamline.id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-private-rt"
-  }
+  })
 }
 
 resource "aws_route_table_association" "private_assoc" {
@@ -184,9 +208,9 @@ resource "aws_security_group" "alb_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-alb-sg"
-  }
+  })
 }
 
 # Web SG: HTTP only from ALB SG, SSH only from your IP
@@ -219,9 +243,9 @@ resource "aws_security_group" "web_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-web-sg"
-  }
+  })
 }
 
 # RDS SG: MySQL only from Web SG
@@ -246,9 +270,9 @@ resource "aws_security_group" "rds_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-rds-sg"
-  }
+  })
 }
 
 ############################
@@ -263,9 +287,9 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web_sg.id]
   key_name               = var.key_name
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-web-${count.index + 1}"
-  }
+  })
 
   user_data = <<-EOF
     #!/bin/bash
@@ -283,9 +307,9 @@ resource "aws_lb" "alb" {
   subnets            = aws_subnet.public[*].id
   security_groups    = [aws_security_group.alb_sg.id]
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-alb"
-  }
+  })
 }
 
 resource "aws_lb_target_group" "tg" {
@@ -303,9 +327,9 @@ resource "aws_lb_target_group" "tg" {
     matcher             = "200-399"
   }
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-tg"
-  }
+  })
 }
 
 resource "aws_lb_target_group_attachment" "tg_attach" {
@@ -333,9 +357,9 @@ resource "aws_db_subnet_group" "db_group" {
   name       = "${var.project_name}-db-subnets"
   subnet_ids = aws_subnet.private[*].id
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-db-subnets"
-  }
+  })
 }
 
 resource "aws_db_instance" "mysql" {
@@ -355,9 +379,9 @@ resource "aws_db_instance" "mysql" {
   publicly_accessible = false
   skip_final_snapshot = true
 
-  tags = {
+  tags = merge(local.common_tags, {
     Name = "${var.project_name}-mysql"
-  }
+  })
 }
 
 ############################
