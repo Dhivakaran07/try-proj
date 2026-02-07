@@ -1,7 +1,7 @@
 app_repo: "https://github.com/Dhivakaran07/try-proj.git"
 app_dest: "/var/www/html"
 app_version: "main"     # can be tag v1/v2 or branch dev/main
-db_host: ""             # set from terraform output (Jenkins/CLI)
+db_host: "streamline-mysql.cveggeisyi6y.us-east-1.rds.amazonaws.com"             # set from terraform output (Jenkins/CLI)
 db_user: "adminuser"
 db_name: "streamline"
 db_pass: "dhiva123"             # set securely (Jenkins credentials or extra-vars)
