@@ -54,7 +54,7 @@ provider "aws" {
 }
 
 ############################
-# AMI (use latest Amazon Linux 2)
+# AMI (Latest Amazon Linux 2)
 ############################
 data "aws_ami" "amazon_linux2" {
   most_recent = true
@@ -162,7 +162,7 @@ resource "aws_route_table_association" "private_assoc" {
 # SECURITY GROUPS
 ############################
 
-# ✅ ALB SG: allow HTTP from anywhere
+# ALB SG: allow HTTP from anywhere
 resource "aws_security_group" "alb_sg" {
   name        = "${var.project_name}-alb-sg"
   description = "ALB SG: HTTP from internet"
@@ -189,7 +189,7 @@ resource "aws_security_group" "alb_sg" {
   }
 }
 
-# ✅ Web SG: HTTP only from ALB SG, SSH only from your IP
+# Web SG: HTTP only from ALB SG, SSH only from your IP
 resource "aws_security_group" "web_sg" {
   name        = "${var.project_name}-web-sg"
   description = "Web SG: HTTP from ALB only, SSH from my IP"
@@ -224,7 +224,7 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
-# ✅ RDS SG: MySQL only from Web SG
+# RDS SG: MySQL only from Web SG
 resource "aws_security_group" "rds_sg" {
   name        = "${var.project_name}-rds-sg"
   description = "RDS SG: MySQL only from Web SG"
@@ -281,9 +281,7 @@ resource "aws_lb" "alb" {
   name               = "${var.project_name}-alb"
   load_balancer_type = "application"
   subnets            = aws_subnet.public[*].id
-
-  # ✅ Correct: ALB uses ALB SG
-  security_groups = [aws_security_group.alb_sg.id]
+  security_groups    = [aws_security_group.alb_sg.id]
 
   tags = {
     Name = "${var.project_name}-alb"
@@ -365,9 +363,14 @@ resource "aws_db_instance" "mysql" {
 ############################
 # OUTPUTS (Used by Jenkins)
 ############################
+output "alb_dns_name" {
+  value       = aws_lb.alb.dns_name
+  description = "ALB DNS name (preferred output name)"
+}
+
 output "alb_dns" {
   value       = aws_lb.alb.dns_name
-  description = "ALB DNS name"
+  description = "ALB DNS name (compat output)"
 }
 
 output "web_public_ips" {
