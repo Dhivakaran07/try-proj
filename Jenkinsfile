@@ -38,7 +38,7 @@ pipeline {
 
     string(
       name: 'KEY_NAME',
-      defaultValue: '',
+      defaultValue: 'try',
       description: 'Existing EC2 key pair name in AWS (required for terraform apply).'
     )
 
