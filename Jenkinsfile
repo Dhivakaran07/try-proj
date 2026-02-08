@@ -32,7 +32,7 @@ pipeline {
 
     string(
       name: 'MY_IP_CIDR',
-      defaultValue: 'YOUR.IP.ADDR/32',
+      defaultValue: '15.207.108.23/32',
       description: 'SSH allow list (IMPORTANT: for Jenkins server public IP). Example: 49.xx.yy.zz/32'
     )
 
